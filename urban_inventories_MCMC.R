@@ -565,7 +565,9 @@ for (city in city.list[1]) {
       print(p)
       dev.off()
     }
-    write.table(sc.res.df, file = paste0("MCMC_results_", city, "_", sector, ".csv"), row.names = F, sep = ",")
+    # write the city results to a table in the city sector folder
+    write.table(sc.res.df, row.names = F, sep = ",", 
+                file = file.path(cs.output.folder, paste0("MCMC_results_", city, "_", sector, ".csv")))
     res.df <- rbind(res.df, sc.res.df)
     
     # error bar plot for logEF ratios

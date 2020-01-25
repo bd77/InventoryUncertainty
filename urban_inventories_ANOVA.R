@@ -337,6 +337,6 @@ for (city in city.list[1]) {
 
 # write all results to a file
 write.table(res.df, row.names = F, sep = ",", 
-            file = file.path(ANOVA.results.path, "inventories_ANOVA_results.csv"))
+            file = file.path("inventories_ANOVA_results.csv"))
 
 
