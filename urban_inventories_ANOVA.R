@@ -53,7 +53,7 @@ sector <- "ms7"
 # loop over all city - sector combinations
 for (city in city.list) {
   for (sector in sector.list) {
-    print(paste("Analyzing emissions of", sector, "in", city))
+    print(paste("ANOVA on emissions of", sector, "in", city))
     
     # create an empty data.frame to store results of a city-sector combination
     sc.res.df <- data.frame()
