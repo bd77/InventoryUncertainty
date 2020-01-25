@@ -23,6 +23,19 @@
 #   - pollutant: nox, pm25, voc, sox
 #   - emission (kton)
 
+# output to determine the sources of uncertainty:
+# - Figures
+# <city>_<sector>_fig1_pol_logE.png: emissions versus pollutants
+# <city>_<sector>_fig2_inv_logE.png: emissions versus inventories
+# <city>_<sector>_fig3_logA_ratios.png: log-activity differences between inventory pairs 
+# <city>_<sector>_fig4_A_pctdiff.png: percentage activity differences between inventory pairs
+# <city>_<sector>_fig5_logEF_<pollutant>_ratios.png: log-EF differences between inventory pairs 
+# <city>_<sector>_fig6_logEF_<pollutant>_pctdiff.png: percentage EF differences between inventory pairs
+# <city>_<sector>_fig7_residuals_pollutant: residual plot to check for heteroskedasticity
+# <city>_<sector>_fig8_residuals_inventory: residual plot to check for heteroskedasticity
+
+# - results table: "inventories_ANOVA_results.csv"
+
 # load libraries
 library(plyr)
 library(ggplot2)
@@ -323,7 +336,7 @@ for (city in city.list[1]) {
 } # close the loop over all cities
 
 # write all results to a file
-write.table(file.path(ANOVA.results.path, res.df), 
-            file = "inventories_ANOVA_results.csv", row.names = F, sep = ",")
+write.table(res.df, row.names = F, sep = ",", 
+            file = file.path(ANOVA.results.path, "inventories_ANOVA_results.csv"))
 
 
