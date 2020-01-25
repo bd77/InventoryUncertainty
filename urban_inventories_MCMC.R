@@ -23,6 +23,28 @@
 #   - pollutant: nox, pm25, voc, sox
 #   - emission (kton)
 
+# output to determine the sources of uncertainty:
+# - Figures
+# <city>_<sector>_fig1_pol_logE.png: emissions versus pollutants
+# <city>_<sector>_fig2a_StdDev.png: standard deviations of activity and emission factors with CI
+# <city>_<sector>_fig2b_StdDev.png: coefficient of variation of activity and emission factors with CI
+# <city>_<sector>_fig3_logA_distributions.png: PDF of the activities of the inventories
+# <city>_<sector>_fig4_logA_ratios.png: log-activity differences between inventory pairs
+# <city>_<sector>_fig5_A_pctdiff.png: percentage activity differences between inventory pairs
+# <city>_<sector>_fig6a_logEF_<pollutant>_distributions.png: PDF of the EFs of the inventories
+# <city>_<sector>_fig7a_logEF_<pollutant>_ratios.png: log-EF differences between inventory pairs
+# <city>_<sector>_fig8a_EF_<pollutant>_pctdiff.png: percentage EF differences between inventory pairs
+
+# - results tables: 
+# write the results to a file:
+# ratio_results_MCMC.csv: The expected values and confidence intervals of activity and emission factor differences.
+# stddev_results_MCMC.csv: The expected values of standard deviations and coefficients of variation an 
+#   their confidence intervals
+# stddev_compare_results_MCMC.csv: pairwise comparison of activity/emission factor SDs and credibility 
+#   that one is bigger than the other based on MCMC samples.
+
+
+
 # load libraries
 library(nlme)
 library(plyr)
@@ -149,13 +171,9 @@ sd.res.df <- data.frame()
 # comparison of standard deviations
 sd.compare.df <- data.frame()
 
-# for testing
-city <- "Budapest"
-sector <- "ms34"
-
 # loop over cities and sectors
-for (city in city.list) {
-  for (sector in sector.list) {
+for (city in city.list[1]) {
+  for (sector in sector.list[3]) {
     print(paste("MCMC on emissions of", sector, "in", city))
     
     # data.frame for the results of a city-sector combination.
@@ -186,13 +204,15 @@ for (city in city.list) {
       }
     }
     
-    # Line plot of logE
+    # Line plot of log emission as a function of pollutant. This plot allows a visual
+    # diagnostic of the main source of uncertainty (parrallel lines => activity,
+    # big spread for one pollutant => emission factor)
     p <- ggplot(data = inv.city.sector.df, 
                 aes(x = pollutant, y = logE, group = inventory, col = inventory)) 
     p <- p + geom_line() + geom_point()
     p <- p + labs(title = paste("log-emissions of", sector, "in", city))
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_0_logE_LinePlot.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig1_pol_logE.png")))
     print(p)
     dev.off()
     
@@ -204,7 +224,8 @@ for (city in city.list) {
                     parameters.to.save = c('logA', 'logEF', 'mu.logEF', 'sd.logEF', 'sd.logA'),
                     model.file = textConnection(mcmc_model_string))
     
-    # process the output
+    # Reorganize the JAGS output
+    # --------------------------
     jagsfit.mcmc <- as.mcmc(jagsfit)
     output.df <- data.frame()
     for (i in 1:n.chains) {
@@ -225,7 +246,9 @@ for (city in city.list) {
       names(output.df)[i.col] <- new.col.name
     }
     
-    # trace plots and PDF per chain
+    # Trace plots and PDF per chain
+    # -----------------------------
+    
     if (trace.plots == TRUE) {
       for (varname in names(output.df)[3:NCOL(output.df)]) {
         # from varname to real names of inventory and pollutant
@@ -263,9 +286,99 @@ for (city in city.list) {
       }
     }
     
+    # Results for standard deviations (SD) and coefficient of variation (CV)
+    # ----------------------------------------------------------------------
+    
+    # SD and CV of the activity
+    # -------------------------
+    sc.sd.res.df<- data.frame()
+    sd.A.output <- output.df$sd.logA
+    # coefficient of variation (%) or relative standard deviation (%)
+    CV.A.output <- 100*sqrt(exp(sd.A.output^2)-1) 
+    sc.sd.res.df <- data.frame(city = city, sector = sector,
+                               outcome = "sigma.A", pollutant = "", label = "Activity", 
+                               output.name = "sd.logA",
+                               EV.sd = mean(sd.A.output),
+                               CI.sd.low = as.numeric(quantile(sd.A.output, probs = 0.5-cred.level/2)),
+                               CI.sd.high = as.numeric(quantile(sd.A.output, probs = 0.5+cred.level/2)),
+                               EV.CV = as.numeric(quantile(CV.A.output, probs = 0.5)),
+                               CI.CV.low = as.numeric(quantile(CV.A.output, probs = 0.5-cred.level/2)),
+                               CI.CV.high = as.numeric(quantile(CV.A.output, probs = 0.5+cred.level/2)))
+    
+    # SD and CV of the emission factors
+    # ---------------------------------
+    for (i.p in 1:NP) {
+      # standard deviation output
+      sd.EF.output <- output.df[, paste0("sd.logEF", i.p)]
+      # Coefficient of variation or relative standard deviation
+      CV.EF.output <- 100*sqrt(exp(sd.EF.output^2)-1) # coefficient of variation (%)
+      sc.sd.res.df <- rbind(sc.sd.res.df,
+                            data.frame(city = city, sector = sector,
+                                       outcome = "sigma.EF", pollutant = pollutant.list[i.p], 
+                                       output.name = paste0("sd.logEF", i.p),
+                                       label = paste(toupper(pollutant.list[i.p]), "EF"),
+                                       EV.sd = mean(sd.EF.output),
+                                       CI.sd.low = as.numeric(quantile(sd.EF.output, probs = 0.5-cred.level/2)),
+                                       CI.sd.high = as.numeric(quantile(sd.EF.output, probs = 0.5+cred.level/2)),
+                                       EV.CV = as.numeric(quantile(CV.EF.output, probs = 0.5)),
+                                       CI.CV.low = as.numeric(quantile(CV.EF.output, probs = 0.5-cred.level/2)),
+                                       CI.CV.high = as.numeric(quantile(CV.EF.output, probs = 0.5+cred.level/2))))
+      
+    }
+    
+    # ranking of the sigmas
+    sc.sd.res.df <- sc.sd.res.df[order(-sc.sd.res.df$EV.sd),]
+    sc.sd.res.df$prob.sd.gt.next <- NA
+    i.row <- 1
+    n.sample <- NROW(output.df)
+    for (i.row in 1:(NROW(sc.sd.res.df)-1)) {
+      # get the index of each pollutant in the 'pollutant.list' vector
+      this.output <- toString(sc.sd.res.df$output.name[i.row])
+      next.output <- toString(sc.sd.res.df$output.name[i.row + 1])
+      sc.sd.res.df$prob.sd.gt.next[i.row] <- sum(output.df[, this.output] > output.df[, next.output]) / n.sample
+    }
+    
+    # compare every sigma with every other
+    sc.sd.compare.df <- data.frame()
+    sd.output.vec <- as.vector(unique(sc.sd.res.df$output.name))
+    for (sd.output.1 in sd.output.vec) {
+      label.1 <- sc.sd.res.df$label[which(sc.sd.res.df$output.name == sd.output.1)]
+      for (sd.output.2 in sd.output.vec[sd.output.vec != sd.output.1]) {
+        label.2 <- sc.sd.res.df$label[which(sc.sd.res.df$output.name == sd.output.2)]
+        prob.sd.1.gt.2 <- sum(output.df[, sd.output.1] > output.df[, sd.output.2]) / n.sample
+        sc.sd.compare.df <- rbind(sc.sd.compare.df,
+                                  data.frame(city = city, sector = sector,
+                                             label.1 = label.1, label.2 = label.2,
+                                             prob.sd.1.gt.2 = prob.sd.1.gt.2))
+      }
+    }
+    sd.compare.df <- rbind(sd.compare.df, sc.sd.compare.df)
+    
+    sc.sd.res.df$label <- factor(sc.sd.res.df$label, levels = rev(sc.sd.res.df$label), ordered = T)
+    
+    # plot coefficient of variation with error bars
+    p <- ggplot(data = sc.sd.res.df, aes(x=EV.sd, y = label)) + geom_point()
+    p <- p + geom_errorbarh(aes(xmin = CI.sd.low, xmax = CI.sd.high))
+    p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
+                  x = "sd of log(A or EF)", y="")
+    p <- p + theme(text = element_text(size=plot.font.size))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig2a_StdDev", ".png")))
+    print(p)
+    dev.off()
+    
+    
+    # plot coefficient of variation with error bars
+    p <- ggplot(data = sc.sd.res.df, aes(x=EV.CV, y = label)) + geom_point()
+    p <- p + geom_errorbarh(aes(xmin = CI.CV.low, xmax = CI.CV.high))
+    p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
+                  x = "Coefficient of variation (%)", y="")
+    p <- p + theme(text = element_text(size=plot.font.size))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig2b_CV", ".png")))
+    print(p)
+    dev.off()
+
     # Distribution of log Activity ratios between pairs of inventories
-    # i1 <- 1 # for testing
-    # i2 <- 2 # for testing
+    # ----------------------------------------------------------------
     # data frame with results of activity ratios (log-activity differences)
     logA.res.df <- data.frame()
     # loop over all inventory pairs
@@ -347,23 +460,22 @@ for (city in city.list) {
     p <- ggplot(logA.df, aes(x=logA, col=inventory)) + geom_density()
     p <- p + labs(title = "logA distributions")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logA_distributions.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig3_logA_distributions.png")))
     print(p)
     dev.off()
     
     # error bar plot for each log(activity ratio), ordered from big to small
     logA.plot.df <- logA.res.df
-    logA.plot.df$inventory.list <- paste0(logA.plot.df$inventory1, " - ", logA.res.df$inventory2)
+    logA.plot.df$inventories <- paste0(logA.plot.df$inventory1, " - ", logA.res.df$inventory2)
     logA.plot.df <- logA.plot.df[order(logA.plot.df$EV.log.ratio),]
     logA.plot.df$inventories <- factor(logA.plot.df$inventories, ordered = T, levels = logA.plot.df$inventories)
     p <- ggplot(data = logA.plot.df, aes(x=EV.log.ratio, y = inventories)) + geom_point()
     p <- p + geom_errorbarh(aes(xmin = CI.low, xmax = CI.high))
     p <- p + geom_vline(xintercept = 0, col = "red")
-    p <- p + labs(title = paste(city, sector, "Activity", 
-                                "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
+    p <- p + labs(title = paste(city, sector, "\nlog(activity ratio) with 2-sided 95% CI"), 
                   x = "log(A1/A2)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logA_ratios.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig4_logA_ratios.png")))
     print(p)
     dev.off()
 
@@ -371,17 +483,14 @@ for (city in city.list) {
     p <- ggplot(data = logA.plot.df, aes(x=EV.pct.diff, y = inventories)) + geom_point()
     p <- p + geom_errorbarh(aes(xmin = CI.low.pct.diff, xmax = CI.high.pct.diff))
     p <- p + geom_vline(xintercept = 0, col = "red")
-    p <- p + labs(title = paste(city, sector, "Activity", 
-                                "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
+    p <- p + labs(title = paste(city, sector, "\nRelative activity diff. with 2-sided 95% CI"), 
                   x = "A1/A2 - 1 (%)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_A_pctdiff.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_fig5_A_pctdiff.png")))
     print(p)
     dev.off()
     
     # Distribution of log emission factor ratios
-    i1<-1
-    i2<-2
     logEF.res.df <- data.frame()
     for (p1 in 1:NP) {
       pol.name <- pollutant.list[p1]
@@ -415,9 +524,9 @@ for (city in city.list) {
           # p <- p + geom_vline(xintercept = c(0, logE1E2), col = "red")
           # print(p)
           png(file.path(cs.output.folder, paste0(city, "_", sector, "_", lr.label, ".png")))
-          
           print(p)
           dev.off()
+
           # table with the results for activities
           logEF.res.df <- rbind(logEF.res.df,
                                 data.frame(city = city,
@@ -450,11 +559,13 @@ for (city in city.list) {
       p <- ggplot(logEF.df, aes(x=logEF, col=inventory)) + geom_density()
       p <- p + labs(title = paste0("logEF ", pollutant.list[p1], " distributions"))
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logEF_", toupper(pollutant.list[p1]), "_distributions.png")))
+      png(file.path(MCMC.results.path, 
+                    paste0(city, "_", sector, "_fig6", letters[p1], "_logEF_", 
+                           toupper(pollutant.list[p1]), "_distributions.png")))
       print(p)
       dev.off()
     }
-    write.table(sc.res.df, file = paste0("ratio_results_", city, "_", sector, ".csv"), row.names = F, sep = ",")
+    write.table(sc.res.df, file = paste0("MCMC_results_", city, "_", sector, ".csv"), row.names = F, sep = ",")
     res.df <- rbind(res.df, sc.res.df)
     
     # error bar plot for logEF ratios
@@ -467,10 +578,12 @@ for (city in city.list) {
       p <- p + geom_errorbarh(aes(xmin = CI.low, xmax = CI.high))
       p <- p + geom_vline(xintercept = 0, col = "red")
       p <- p + labs(title = paste(city, sector, toupper(pollutant.list[i.p]), 
-                                  "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
+                                  "\nlog(EF ratios) with 2-sided 95% CI"), 
                     x = "log(EF1/EF2)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logEF_", pollutant.list[i.p], "_ratios.png")))
+      png(file.path(MCMC.results.path, 
+                    paste0(city, "_", sector, "_fig7", letters[p1], "_logEF_", 
+                           pollutant.list[i.p], "_ratios.png")))
       print(p)
       dev.off()
       
@@ -479,108 +592,25 @@ for (city in city.list) {
       p <- p + geom_errorbarh(aes(xmin = CI.low.pct.diff, xmax = CI.high.pct.diff))
       p <- p + geom_vline(xintercept = 0, col = "red")
       p <- p + labs(title = paste(city, sector, toupper(pollutant.list[i.p]), 
-                                  "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
+                                  "\nRelative EF diff. with 2-sided 95% CI"), 
                     x = "EF1/EF2 - 1 (%)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_EF_", pollutant.list[i.p], "_pctdiff.png")))
+      png(file.path(MCMC.results.path, 
+                    paste0(city, "_", sector, "_fig8", letters[p1], "_EF_", pollutant.list[i.p], "_pctdiff.png")))
       print(p)
       dev.off()
     }
-    
-    # Results for standard deviations and coefficient of variation
-    # -------------------------------------------------------------
-    
-    # Std dev or CV of the activity
-    # -----------------------------
-    sc.sd.res.df<- data.frame()
-    sd.A.output <- output.df$sd.logA
-    # coefficient of variation (%) or relative standard deviation (%)
-    CV.A.output <- 100*sqrt(exp(sd.A.output^2)-1) 
-    sc.sd.res.df <- data.frame(city = city, sector = sector,
-                               outcome = "sigma.A", pollutant = "", label = "Activity", 
-                               output.name = "sd.logA",
-                               EV.sd = mean(sd.A.output),
-                               CI.sd.low = as.numeric(quantile(sd.A.output, probs = 0.5-cred.level/2)),
-                               CI.sd.high = as.numeric(quantile(sd.A.output, probs = 0.5+cred.level/2)),
-                               EV.CV = as.numeric(quantile(CV.A.output, probs = 0.5)),
-                               CI.CV.low = as.numeric(quantile(CV.A.output, probs = 0.5-cred.level/2)),
-                               CI.CV.high = as.numeric(quantile(CV.A.output, probs = 0.5+cred.level/2)))
-    
-    for (i.p in 1:NP) {
-      # standard deviation output
-      sd.EF.output <- output.df[, paste0("sd.logEF", i.p)]
-      # Coefficient of variation or relative standard deviation
-      CV.EF.output <- 100*sqrt(exp(sd.EF.output^2)-1) # coefficient of variation (%)
-      sc.sd.res.df <- rbind(sc.sd.res.df,
-                            data.frame(city = city, sector = sector,
-                                       outcome = "sigma.EF", pollutant = pollutant.list[i.p], 
-                                       output.name = paste0("sd.logEF", i.p),
-                                       label = paste(toupper(pollutant.list[i.p]), "EF"),
-                                       EV.sd = mean(sd.EF.output),
-                                       CI.sd.low = as.numeric(quantile(sd.EF.output, probs = 0.5-cred.level/2)),
-                                       CI.sd.high = as.numeric(quantile(sd.EF.output, probs = 0.5+cred.level/2)),
-                                       EV.CV = as.numeric(quantile(CV.EF.output, probs = 0.5)),
-                                       CI.CV.low = as.numeric(quantile(CV.EF.output, probs = 0.5-cred.level/2)),
-                                       CI.CV.high = as.numeric(quantile(CV.EF.output, probs = 0.5+cred.level/2))))
-    
-    }
-    
-    # ranking of the sigmas
-    sc.sd.res.df <- sc.sd.res.df[order(-sc.sd.res.df$EV.sd),]
-    sc.sd.res.df$prob.sd.gt.next <- NA
-    i.row <- 1
-    n.sample <- NROW(output.df)
-    for (i.row in 1:(NROW(sc.sd.res.df)-1)) {
-      # get the index of each pollutant in the 'pollutant.list' vector
-      this.output <- toString(sc.sd.res.df$output.name[i.row])
-      next.output <- toString(sc.sd.res.df$output.name[i.row + 1])
-      sc.sd.res.df$prob.sd.gt.next[i.row] <- sum(output.df[, this.output] > output.df[, next.output]) / n.sample
-    }
-    
-    # compare every sigma with every other
-    sc.sd.compare.df <- data.frame()
-    sd.output.vec <- as.vector(unique(sc.sd.res.df$output.name))
-    for (sd.output.1 in sd.output.vec) {
-      label.1 <- sc.sd.res.df$label[which(sc.sd.res.df$output.name == sd.output.1)]
-      for (sd.output.2 in sd.output.vec[sd.output.vec != sd.output.1]) {
-        label.2 <- sc.sd.res.df$label[which(sc.sd.res.df$output.name == sd.output.2)]
-        prob.sd.1.gt.2 <- sum(output.df[, sd.output.1] > output.df[, sd.output.2]) / n.sample
-        sc.sd.compare.df <- rbind(sc.sd.compare.df,
-                                  data.frame(city = city, sector = sector,
-                                             label.1 = label.1, label.2 = label.2,
-                                            prob.sd.1.gt.2 = prob.sd.1.gt.2))
-      }
-    }
-    sd.compare.df <- rbind(sd.compare.df, sc.sd.compare.df)
-    
-    sc.sd.res.df$label <- factor(sc.sd.res.df$label, levels = rev(sc.sd.res.df$label), ordered = T)
-    
-    # plot coefficient of variation with error bars
-    p <- ggplot(data = sc.sd.res.df, aes(x=EV.sd, y = label)) + geom_point()
-    p <- p + geom_errorbarh(aes(xmin = CI.sd.low, xmax = CI.sd.high))
-    p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
-                  x = "sd of log(A or EF)", y="")
-    p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_StdDev", ".png")))
-    print(p)
-    dev.off()
-    
-    
-    # plot coefficient of variation with error bars
-    p <- ggplot(data = sc.sd.res.df, aes(x=EV.CV, y = label)) + geom_point()
-    p <- p + geom_errorbarh(aes(xmin = CI.CV.low, xmax = CI.CV.high))
-    p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
-                  x = "Coefficient of variation (%)", y="")
-    p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_CV", ".png")))
-    print(p)
-    dev.off()
     
     # add them to the rest
     sd.res.df <- rbind(sd.res.df, sc.sd.res.df)
   }
 }
 
+# write the results to a file:
+# - the expected values and confidence intervals of activity and emission factor differences
 write.table(res.df, file = "ratio_results_MCMC.csv", row.names = F, sep = ",")
+# - the expected values of standard deviations and coefficients of variation an their confidence intervals
 write.table(sd.res.df, file = "stddev_results_MCMC.csv", row.names = F, sep = ",")
+# - pairwise comparison of activity/emission factor SDs and credibility that one is bigger than the other
+# based on MCMC samples.
 write.table(sd.compare.df, file = "stddev_compare_results_MCMC.csv", row.names = F, sep = ",")
