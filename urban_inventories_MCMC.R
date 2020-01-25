@@ -1,35 +1,120 @@
-# -------------------------------------------------------------
-# Emission inventories: where does the uncertainty come form?
-# Activity or Emission factors?
-# -------------------------------------------------------------
+# -------------------------------------------------------#
+#  Analysis of the uncertainties in emission inventories #
+# ------------ with Markov Chain Monte Carlo ------------#
+# -------------------------------------------------------#
 
-# Input: Total emissions for several cities from 6 inventories for
-# 3 sectors and 4 pollutants.
-# Question: Does the variablility in the total emissions tell us something
-# about the ratio of the relative errors of the activity and the emission factor?
-# relative error of activity = std. dev. activity / mean activity
-# idem for emission factor.
+# This is the code related to the publication 
+# "A statistical model for the uncertainties in emission inventories"
 
+# Authors: Degraeuwe, B. and Peduzzi, E.
+
+# contact: bart.degraeuwe@ec.europa.eu
+
+# This script reads data for 11 cities, 3 sectors, 6 inventories and 4 pollutants.
+# A one-way ANOVA is performed on each city-sector combination. For each inventory
+# pair the log-activity and log-emission factor differences are calculated with
+# their confidence interval.
+
+# input file: 'inventories.csv'
+# 5 columns:
+#   - city: Barcelona, Bucarest, Budapest, Katowice, London, Madrid, Milan, Paris, Sofia, Utrecht, Warsaw
+#   - sector: ms34 (industry), ms2 (residential), ms7 (road transport)
+#   - inventory: ctm4iam, edgar, emep, jrc, macc2, macc3
+#   - pollutant: nox, pm25, voc, sox
+#   - emission (kton)
+
+# load libraries
 library(nlme)
 library(plyr)
 library(R2jags)
 library(ggplot2)
 
-set.seed(666)
-
+# clean up
 rm(list = ls())
-wd <- "D:/DiamondPlot/_code_for_paper/urban_inventories_JAGS_RANDOM_EFFECTS"
+# set the working directory
+wd <- "C:/Documenten/InventoryUncertainty"
 setwd(wd)
 
-# 0.95 is chosen because for the log ratios we consider 1-sided credibility intervals
+# create a folder for the results
+MCMC.results.path <- "MCMC_results"
+if (!dir.exists(MCMC.results.path)) {
+  dir.create(MCMC.results.path)
+}
+
+# credibility interval for log-activity and emission factor differences
 cred.level <- 0.95
 # plot font size
-plot.font.size <- 20
+plot.font.size <- 15
 # make trace plots
 trace.plots <- TRUE # takes a lot of time
+# set the seed for repeatable results
+set.seed(666)
+
+# read the input data
+inv.df <- read.table('inventories.csv', header = T, sep = ",")
+city.list <- as.vector(unique(inv.df$city))
+sector.list <- as.vector(unique(inv.df$sector))
+
+# Data exploration
+# ----------------
+
+# An overview of the coefficients of variation (relative standard deviations) of the emissions 
+# and the standard deviations of the emissions
+# These should be related by sd/mean = sqrt(exp(var(log(E)))-1) if E is log-nomrally distributed.
+sd.city.sector.pol.overview <- ddply(inv.df, c('city', 'sector', 'pollutant'), summarise, 
+                                     rel.sd.E = sd(emission)/mean(emission), 
+                                     sd.log.E = sqrt(exp(var(log(emission)))-1))
+# some outliers here but the assumption of a log-normal distribution looks ok
+p <- ggplot(data = sd.city.sector.pol.overview, aes(x=rel.sd.E, y=sd.log.E)) + geom_point()
+p <- p + geom_abline(intercept = 0, slope = 1, col="red")
+p <- p + labs(x="Relative sd of the emissions", y="sd of log-emissions")
+png(file.path(MCMC.results.path, "1_relative_sd_VS_sd_of_logE.png"))
+print(p)
+dev.off()
+# The sd of the log VOC emissions in Katowice for ms34 are an extreme outlier (10.0)
+# Normal values are around 0.5
+
+# boxplots of the standard deviation of log-emissions
+p <- ggplot(sd.city.sector.pol.overview, aes(x=pollutant, y=sd.log.E)) + geom_boxplot()
+p <- p + lims(y=c(0,2.5)) # There is one big outlier for VOC in Katowice
+png(file.path(MCMC.results.path, "2_Boxplot_sd_logE_per_pollutant.png"))
+print(p)
+dev.off()
+
+# quantile plot: log-emissions verus normal distribution
+png(file.path(MCMC.results.path, "3_Normal_quantile_plot_of_logE.png"))
+qqplot(rnorm(10*NROW(inv.df)), log(inv.df$emission),
+       main = "QQ-plot of log-emissions",
+       xlab="Quantiles of a normal distribution",
+       ylab="Quantiles of log(emissions)")
+dev.off()
+
+# quantile plots per city-sector combination
+qqplot.folder <- file.path(MCMC.results.path, "quantile_plots")
+if (!dir.exists(qqplot.folder)) {
+  dir.create(qqplot.folder)
+}
+for (city in city.list) {
+  for (sector in sector.list) {
+    png(file.path(qqplot.folder, 
+                  paste0("Normal_quantile_plot_of_logE_for", city, "_", sector, ".png")))
+    qqplot(rnorm(10*NROW(inv.df)), log(inv.df$emission[inv.df$city==city & inv.df$sector==sector]),
+           xlab="Quantiles of a normal distribution",
+           ylab="Quantiles of log(emissions)",
+           main = paste("QQ-plot for the log-emissions of", sector, "in", city))
+    dev.off()
+  }
+}
+
+# Markov Chain Monte Carlo
+# ------------------------
 
 # The stochastic model used in JAGS
-random_effects_string <- "model{
+# The response Y are the log-emissions
+# Each pollutant has its own emission factor standard deviation (sd.logEF[j])
+# The log-activities (logA[i]) of the inventories are normally distributed with
+# standard deviation sd.logA.
+mcmc_model_string <- "model{
   # Likelihood
   for(i in 1:NI){
     for (j in 1:NP) {
@@ -46,7 +131,7 @@ random_effects_string <- "model{
   for (i in 1:NI) {
     logA[i] ~ dnorm(0, tau.logA)
   }
-
+  
   # Priors
   sd.logA <- (tau.logA)^(-0.5)
   tau.logA ~ dgamma(0.0001, 0.0001)
@@ -57,96 +142,12 @@ random_effects_string <- "model{
   }
 }"
 
-# read the input data
-inv.table.df <- read.table("cities_emission_inventories.txt", header = T, sep = "\t")
-# the Synth inventory is the median of the others, remove it
-inv.table.df <- inv.table.df[inv.table.df$inventory != "synth",]
-inv.table.df$inventory <- factor(inv.table.df$inventory, levels = as.vector(unique(inv.table.df$inventory)))
-
-# lists of cities and sectors
-city.list <- as.vector(unique(inv.table.df$city)) # c("Barcelona", "Katowice") # 
-sector.list <- as.vector(unique(inv.table.df$sector)) # c("ms7", "ms34") # 
-
-# reorganize, 4 pollutant columns to 1 with the pollutant name and 1 with the emissions
-inv.df <- data.frame()
-for (pollutant in c('nox', 'pm25', 'so2', 'voc')) {
-  inv.pol.df <- inv.table.df[, c('city', 'inventory', 'sector', pollutant)]
-  names(inv.pol.df)[4] <- "emission"
-  inv.pol.df$pollutant <- pollutant
-  inv.df <- rbind(inv.df, inv.pol.df)
-}
-
-# An overview of the coefficients of variation (relative standard deviations) of the emissions 
-# and the standard deviations of the emissions
-# These should be related by sd/mean = sqrt(exp(var(log(E)))-1) if E is log-nomrally distributed.
-sd.city.sector.pol.overview <- ddply(inv.df, c('city', 'sector', 'pollutant'), summarise, 
-                                     rel.sd.e = sd(emission)/mean(emission), 
-                                     sd.log.e = sqrt(exp(var(log(emission)))-1))
-# some outliers here but the assumption of a log-normal distribution looks ok
-p <- ggplot(data = sd.city.sector.pol.overview, aes(x=rel.sd.e, y=sd.log.e)) + geom_point()
-p <- p + geom_abline(intercept = 0, slope = 1, col="red")
-p <- p + labs(x="Relative sd of the emissions", y="sd of log-emissions")
-png("relative_sd_VS_sd_of_logE.png")
-print(p)
-dev.off()
-# The sd of the log VOC emissions in Katowice for ms34 are an extreme outlier (10.0)
-# Normal values are around 0.5
-
-# boxplots of sd of log-emissions
-p <- ggplot(sd.city.sector.pol.overview, aes(x=pollutant, y=sd.log.e)) + geom_boxplot()
-p <- p + lims(y=c(0,2.5))
-png("Boxplot_sd_logE_per_pollutant.png")
-print(p)
-dev.off()
-
-# find a distribution that describes the sd of the emissions. It is used for the simulation study.
-# log-normal works fine
-p <- ggplot() + geom_line(data = data.frame(x=seq(0,10,0.1), y=dlnorm(seq(0,10,0.1), meanlog = -0.59, sdlog = 0.73)),
-                          aes(x = x, y = y, col="red")) + geom_density(data=sd.city.sector.pol.overview, aes(x=sd.log.e))
-p
-
-# range of standard deviations to be used in the simulation studies
-sd.df <- ddply(inv.df, c('city', 'sector', 'pollutant'), summarise, sd.pol = sd(log(emission)))
-range(sd.df$sd.pol)
-# quantiles (there are a few big outliers)
-quantile(sd.df$sd.pol, probs = c(0.05, 0.95))
-# 5%       95% 
-# 0.1903845 1.2808845 
-# as percentage error
-sqrt(exp(quantile(sd.df$sd.pol, probs = c(0.05, 0.95))^2)-1)
-# 5%       95% 
-# 0.1921228 2.0392646
-
-# quantile plot: log-emissions verus normal distribution
-png("Normal quantile plot of logE.png")
-qqplot(rnorm(10*NROW(inv.df)), log(inv.df$emission),
-       xlab="Quantiles of a normal distribution",
-       ylab="Quantiles of log(emissions)")
-dev.off()
-# quantile plots per city-sector combination
-if (!dir.exists("quantile_plots")) {dir.create("quantile_plots")}
-for (city in city.list) {
-  for (sector in sector.list) {
-    png(file.path("quantile_plots", 
-                  paste0("Normal quantile plot of logE for", city, " ", sector, ".png")))
-    qqplot(rnorm(10*NROW(inv.df)), log(inv.df$emission[inv.df$city==city & inv.df$sector==sector]),
-           xlab="Quantiles of a normal distribution",
-           ylab="Quantiles of log(emissions)",
-           main = paste(city, sector))
-    dev.off()
-  }
-}
-
 # data frame with all the results for activities and emission factors
 res.df <- data.frame()
 # data frame with all the results for standard deviations
 sd.res.df <- data.frame()
 # comparison of standard deviations
 sd.compare.df <- data.frame()
-
-
-plot.path <- "plots"
-if (!dir.exists(plot.path)) {dir.create(plot.path)}
 
 # for testing
 city <- "Budapest"
@@ -155,33 +156,33 @@ sector <- "ms34"
 # loop over cities and sectors
 for (city in city.list) {
   for (sector in sector.list) {
+    print(paste("MCMC on emissions of", sector, "in", city))
+    
+    # data.frame for the results of a city-sector combination.
     sc.res.df <- data.frame()
     
-    print(paste(city, sector))
     # select just the data of one city-sector combination
     inv.city.sector.df <- inv.df[inv.df$city==city & inv.df$sector==sector,]
     # add a column with log emissions
     inv.city.sector.df$logE <- log(inv.city.sector.df$emission)
-    # sort the data !!! ORDER IMPORTANT FOR NEXT STEP !!!
-    inv.city.sector.df <- inv.city.sector.df[order(inv.city.sector.df$inventory,inv.city.sector.df$pollutant),]
-    
+
     # output folder for the city-sector
-    cs.output.folder <- file.path(paste(city, sector, sep = "_"))
+    cs.output.folder <- file.path(MCMC.results.path, paste(city, sector, sep = "_"))
     if (!(dir.exists(cs.output.folder))) {
       dir.create(cs.output.folder)
     }
     
-    pollutants <- as.vector(unique(inv.city.sector.df$pollutant))
-    NP <- length(pollutants)
-    inventories <- as.vector(unique(inv.city.sector.df$inventory))
-    NI <- length(inventories)
+    pollutant.list <- as.vector(unique(inv.city.sector.df$pollutant))
+    NP <- length(pollutant.list)
+    inventory.list <- as.vector(unique(inv.city.sector.df$inventory))
+    NI <- length(inventory.list)
       
     # log emissions as a matrix
-    Y <- matrix(0, nrow = NI, ncol = NP, dimnames = list(inventories, pollutants))
+    Y <- matrix(0, nrow = NI, ncol = NP, dimnames = list(inventory.list, pollutant.list))
     for (i in 1:NI) {
       for (j in 1:NP) {
-        Y[i,j] <- inv.city.sector.df$logE[inv.city.sector.df$inventory==inventories[i] &
-                                            inv.city.sector.df$pollutant == pollutants[j]]
+        Y[i,j] <- inv.city.sector.df$logE[inv.city.sector.df$inventory==inventory.list[i] &
+                                            inv.city.sector.df$pollutant == pollutant.list[j]]
       }
     }
     
@@ -189,29 +190,30 @@ for (city in city.list) {
     p <- ggplot(data = inv.city.sector.df, 
                 aes(x = pollutant, y = logE, group = inventory, col = inventory)) 
     p <- p + geom_line() + geom_point()
-    p <- p + labs(title = paste(city, sector))
+    p <- p + labs(title = paste("log-emissions of", sector, "in", city))
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_0_logE_LinePlot.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_0_logE_LinePlot.png")))
     print(p)
     dev.off()
     
     # -------- JAGS ----------
     # JAGS simulation
+    n.chains <- 3
     jags.input.list <- list(Y = Y, NI = NI, NP = NP)
-    jagsfit <- jags(data = jags.input.list, n.iter=10000,
+    jagsfit <- jags(data = jags.input.list, n.iter=10000, n.chains=n.chains,
                     parameters.to.save = c('logA', 'logEF', 'mu.logEF', 'sd.logEF', 'sd.logA'),
-                    model.file = textConnection(random_effects_string))
+                    model.file = textConnection(mcmc_model_string))
     
     # process the output
     jagsfit.mcmc <- as.mcmc(jagsfit)
     output.df <- data.frame()
-    for (i in 1:3) {
+    for (i in 1:n.chains) {
       chain.df <- cbind(chain = toString(i), iteration = 1:NROW(jagsfit.mcmc[[i]]), 
                         as.data.frame(jagsfit.mcmc[[i]]))
       output.df <- rbind(output.df, chain.df)
     }
     
-    # rename columns of output.df: remove brackets, they're annoying
+    # rename columns of output.df and remove brackets
     # "B[2,2]" becomes B2_2
     output.col.names <- names(output.df)
     n.col.output <- NCOL(output.df)
@@ -229,15 +231,15 @@ for (city in city.list) {
         # from varname to real names of inventory and pollutant
         if (grepl(pattern = "^(logA)", varname)) {
           inv.id <- as.numeric(gsub(pattern = "logA", "", varname))
-          var.label <- paste0('logA_', inventories[inv.id])
+          var.label <- paste0('logA_', inventory.list[inv.id])
         } else if (grepl(pattern = "^(logEF)", varname)) {
           inv.pol.id <- gsub(pattern = "logEF", "", varname)
           inv.id <- as.numeric(strsplit(inv.pol.id, "_")[[1]][1])
           pol.id <- as.numeric(strsplit(inv.pol.id, "_")[[1]][2])
-          var.label <- paste0('logEF_', inventories[inv.id], '_', pollutants[pol.id])
+          var.label <- paste0('logEF_', inventory.list[inv.id], '_', pollutant.list[pol.id])
         } else if (grepl(pattern = "^(sd.logEF)", varname)) {
           pol.id <- as.numeric(gsub(pattern = "sd.logEF", "", varname))
-          var.label <- paste0('sd.logEF_', pollutants[pol.id])
+          var.label <- paste0('sd.logEF_', pollutant.list[pol.id])
         } else {
           var.label <- varname
         }
@@ -269,35 +271,35 @@ for (city in city.list) {
     # loop over all inventory pairs
     for (i1 in 1:(NI-1)) {
       for (i2 in (i1+1):NI) {
-        inv1 <- inventories[i1]
-        inv2 <- inventories[i2]
+        inv1 <- inventory.list[i1]
+        inv2 <- inventory.list[i2]
         lr.label <- paste0("Activity_ratio_", inv1, "_", inv2)
         # vector with all the samples of the log of the activity ratio
         lrA1A2 <- output.df[,paste0("logA",i1)] - output.df[,paste0("logA",i2)]
         mean.lrA1A2 <- mean(lrA1A2)
         if (mean.lrA1A2 < 0) {
-          inv1 <- inventories[i2]
-          inv2 <- inventories[i1]
+          inv1 <- inventory.list[i2]
+          inv2 <- inventory.list[i1]
           lrA1A2 <- -lrA1A2
           mean.lrA1A2 <- -mean.lrA1A2
         }
         
-        # calculate the emission ratios
-        logE1E2 <- Y[inv1,] - Y[inv2,]
-        asymtotes <- sort(c(0, as.numeric(logE1E2)))
-        
-        # function giving the zeros in the 2 inventory case
-        zero.function <- function(ar, logE1E2) {
-          1/ar + sum(1/(ar - logE1E2))
-        }
-        
-        ar.zero.vec <- rep(NA, length(logE1E2))
-        for (i.interval in 1:length(logE1E2)) {
-          width.interval <- asymtotes[i.interval+1] - asymtotes[i.interval]
-          search.interval <- c(asymtotes[i.interval], asymtotes[i.interval+1]) + width.interval/10000 * c(1,-1)
-          uniroot.output <- uniroot(f = zero.function, interval = search.interval, logE1E2) 
-          ar.zero.vec[i.interval] <- uniroot.output$root
-        }
+        # # calculate the emission ratios
+        # logE1E2 <- Y[inv1,] - Y[inv2,]
+        # asymtotes <- sort(c(0, as.numeric(logE1E2)))
+        # 
+        # # function giving the zeros in the 2 inventory case
+        # zero.function <- function(ar, logE1E2) {
+        #   1/ar + sum(1/(ar - logE1E2))
+        # }
+        # 
+        # ar.zero.vec <- rep(NA, length(logE1E2))
+        # for (i.interval in 1:length(logE1E2)) {
+        #   width.interval <- asymtotes[i.interval+1] - asymtotes[i.interval]
+        #   search.interval <- c(asymtotes[i.interval], asymtotes[i.interval+1]) + width.interval/10000 * c(1,-1)
+        #   uniroot.output <- uniroot(f = zero.function, interval = search.interval, logE1E2) 
+        #   ar.zero.vec[i.interval] <- uniroot.output$root
+        # }
 
         # percent difference of all samples
         pct.diff.A1A2 <- 100*(exp(lrA1A2)-1)
@@ -309,8 +311,8 @@ for (city in city.list) {
         p <- p + labs(title = paste0(lr.label, " (Pr<=0 = ", round(prob.below.zero*100,1), ")"))
         p <- p + theme(text = element_text(size=plot.font.size))
         p <- p + geom_vline(xintercept = mean.lrA1A2, col = "green")
-        p <- p + geom_vline(xintercept = asymtotes, col = "red")
-        p <- p + geom_vline(xintercept = c(0, ar.zero.vec), col = "grey")
+        # p <- p + geom_vline(xintercept = asymtotes, col = "red")
+        # p <- p + geom_vline(xintercept = c(0, ar.zero.vec), col = "grey")
         # print(p)
         png(file.path(cs.output.folder, paste0(city, "_", sector, "_", lr.label, ".png")))
         print(p)
@@ -339,19 +341,19 @@ for (city in city.list) {
     # one plot with all the logA's
     logA.df <- data.frame()
     for (i1 in 1:NI) {
-      logA.df <- rbind(logA.df, data.frame(inventory = inventories[i1], 
+      logA.df <- rbind(logA.df, data.frame(inventory = inventory.list[i1], 
                                            logA = output.df[, paste0("logA",i1)]))
     }
     p <- ggplot(logA.df, aes(x=logA, col=inventory)) + geom_density()
     p <- p + labs(title = "logA distributions")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_logA_distributions.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logA_distributions.png")))
     print(p)
     dev.off()
     
     # error bar plot for each log(activity ratio), ordered from big to small
     logA.plot.df <- logA.res.df
-    logA.plot.df$inventories <- paste0(logA.plot.df$inventory1, " - ", logA.res.df$inventory2)
+    logA.plot.df$inventory.list <- paste0(logA.plot.df$inventory1, " - ", logA.res.df$inventory2)
     logA.plot.df <- logA.plot.df[order(logA.plot.df$EV.log.ratio),]
     logA.plot.df$inventories <- factor(logA.plot.df$inventories, ordered = T, levels = logA.plot.df$inventories)
     p <- ggplot(data = logA.plot.df, aes(x=EV.log.ratio, y = inventories)) + geom_point()
@@ -361,7 +363,7 @@ for (city in city.list) {
                                 "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
                   x = "log(A1/A2)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_logA_ratios.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logA_ratios.png")))
     print(p)
     dev.off()
 
@@ -373,7 +375,7 @@ for (city in city.list) {
                                 "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
                   x = "A1/A2 - 1 (%)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_A_pctdiff.png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_A_pctdiff.png")))
     print(p)
     dev.off()
     
@@ -382,17 +384,17 @@ for (city in city.list) {
     i2<-2
     logEF.res.df <- data.frame()
     for (p1 in 1:NP) {
-      pol.name <- pollutants[p1]
+      pol.name <- pollutant.list[p1]
       for (i1 in 1:(NI-1)) {
         for (i2 in (i1+1):NI) {
-          inv1 <- inventories[i1]
-          inv2 <- inventories[i2]
+          inv1 <- inventory.list[i1]
+          inv2 <- inventory.list[i2]
           # log ratio of all the samples
           lrEF1EF2 <- output.df[,paste0("logEF",i1,"_",p1)] - output.df[,paste0("logEF",i2,"_",p1)]
           mean.lrEF1EF2 <- mean(lrEF1EF2)
           if (mean.lrEF1EF2 < 0) {
-            inv1 <- inventories[i2]
-            inv2 <- inventories[i1]
+            inv1 <- inventory.list[i2]
+            inv2 <- inventory.list[i1]
             mean.lrEF1EF2 <- -mean.lrEF1EF2
             lrEF1EF2 <- -lrEF1EF2
           }
@@ -442,13 +444,13 @@ for (city in city.list) {
     for (p1 in 1:NP) {
       logEF.df <- data.frame()
       for (i1 in 1:NI) {
-        logEF.df <- rbind(logEF.df, data.frame(inventory = inventories[i1], 
+        logEF.df <- rbind(logEF.df, data.frame(inventory = inventory.list[i1], 
                                                logEF = output.df[, paste0("logEF", i1, "_", p1)]))
       }
       p <- ggplot(logEF.df, aes(x=logEF, col=inventory)) + geom_density()
-      p <- p + labs(title = paste0("logEF ", pollutants[p1], " distributions"))
+      p <- p + labs(title = paste0("logEF ", pollutant.list[p1], " distributions"))
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(plot.path, paste0(city, "_", sector, "_logEF_", toupper(pollutants[p1]), "_distributions.png")))
+      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logEF_", toupper(pollutant.list[p1]), "_distributions.png")))
       print(p)
       dev.off()
     }
@@ -457,18 +459,18 @@ for (city in city.list) {
     
     # error bar plot for logEF ratios
     for (i.p in 1:NP) {
-      logEF.plot.df <- sc.res.df[sc.res.df$pollutant == pollutants[i.p],]
+      logEF.plot.df <- sc.res.df[sc.res.df$pollutant == pollutant.list[i.p],]
       logEF.plot.df$inventories <- paste0(logEF.plot.df$inventory1, " - ", logEF.plot.df$inventory2)
       logEF.plot.df <- logEF.plot.df[order(logEF.plot.df$EV.log.ratio),]
       logEF.plot.df$inventories <- factor(logEF.plot.df$inventories, ordered = T, levels = logEF.plot.df$inventories)
       p <- ggplot(data = logEF.plot.df, aes(x=EV.log.ratio, y = inventories)) + geom_point()
       p <- p + geom_errorbarh(aes(xmin = CI.low, xmax = CI.high))
       p <- p + geom_vline(xintercept = 0, col = "red")
-      p <- p + labs(title = paste(city, sector, toupper(pollutants[i.p]), 
+      p <- p + labs(title = paste(city, sector, toupper(pollutant.list[i.p]), 
                                   "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
                     x = "log(EF1/EF2)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(plot.path, paste0(city, "_", sector, "_logEF_", pollutants[i.p], "_ratios.png")))
+      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_logEF_", pollutant.list[i.p], "_ratios.png")))
       print(p)
       dev.off()
       
@@ -476,11 +478,11 @@ for (city in city.list) {
       p <- ggplot(data = logEF.plot.df, aes(x=EV.pct.diff, y = inventories)) + geom_point()
       p <- p + geom_errorbarh(aes(xmin = CI.low.pct.diff, xmax = CI.high.pct.diff))
       p <- p + geom_vline(xintercept = 0, col = "red")
-      p <- p + labs(title = paste(city, sector, toupper(pollutants[i.p]), 
+      p <- p + labs(title = paste(city, sector, toupper(pollutant.list[i.p]), 
                                   "\n% diff with 2-sided ", round(cred.level*100), "% CI"), 
                     x = "EF1/EF2 - 1 (%)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(plot.path, paste0(city, "_", sector, "_EF_", pollutants[i.p], "_pctdiff.png")))
+      png(file.path(MCMC.results.path, paste0(city, "_", sector, "_EF_", pollutant.list[i.p], "_pctdiff.png")))
       print(p)
       dev.off()
     }
@@ -511,9 +513,9 @@ for (city in city.list) {
       CV.EF.output <- 100*sqrt(exp(sd.EF.output^2)-1) # coefficient of variation (%)
       sc.sd.res.df <- rbind(sc.sd.res.df,
                             data.frame(city = city, sector = sector,
-                                       outcome = "sigma.EF", pollutant = pollutants[i.p], 
+                                       outcome = "sigma.EF", pollutant = pollutant.list[i.p], 
                                        output.name = paste0("sd.logEF", i.p),
-                                       label = paste(toupper(pollutants[i.p]), "EF"),
+                                       label = paste(toupper(pollutant.list[i.p]), "EF"),
                                        EV.sd = mean(sd.EF.output),
                                        CI.sd.low = as.numeric(quantile(sd.EF.output, probs = 0.5-cred.level/2)),
                                        CI.sd.high = as.numeric(quantile(sd.EF.output, probs = 0.5+cred.level/2)),
@@ -529,7 +531,7 @@ for (city in city.list) {
     i.row <- 1
     n.sample <- NROW(output.df)
     for (i.row in 1:(NROW(sc.sd.res.df)-1)) {
-      # get the index of each pollutant in the 'pollutants' vector
+      # get the index of each pollutant in the 'pollutant.list' vector
       this.output <- toString(sc.sd.res.df$output.name[i.row])
       next.output <- toString(sc.sd.res.df$output.name[i.row + 1])
       sc.sd.res.df$prob.sd.gt.next[i.row] <- sum(output.df[, this.output] > output.df[, next.output]) / n.sample
@@ -559,7 +561,7 @@ for (city in city.list) {
     p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
                   x = "sd of log(A or EF)", y="")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_StdDev", ".png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_StdDev", ".png")))
     print(p)
     dev.off()
     
@@ -570,7 +572,7 @@ for (city in city.list) {
     p <- p + labs(title = paste(city, sector, "\nCV with 2-sided", round(cred.level*100), "% CI"), 
                   x = "Coefficient of variation (%)", y="")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(plot.path, paste0(city, "_", sector, "_CV", ".png")))
+    png(file.path(MCMC.results.path, paste0(city, "_", sector, "_CV", ".png")))
     print(p)
     dev.off()
     
