@@ -30,7 +30,7 @@ library(ggplot2)
 # clean up
 rm(list = ls())
 # set the working directory
-wd <- "D:/Diamondplot/github/InventoryUncertainty"
+wd <- "C:/Documenten/InventoryUncertainty"
 setwd(wd)
 
 # read the input data
@@ -51,8 +51,8 @@ city <- "Barcelona"
 sector <- "ms7"
 
 # loop over all city - sector combinations
-for (city in city.list) {
-  for (sector in sector.list) {
+for (city in city.list[1]) {
+  for (sector in sector.list[3]) {
     print(paste("ANOVA on emissions of", sector, "in", city))
     
     # create an empty data.frame to store results of a city-sector combination
@@ -66,26 +66,26 @@ for (city in city.list) {
     # add a column with log emissions
     inv.city.sector.df$logE <- log(inv.city.sector.df$emission)
 
-    # plot the emisssions per inventory
-    p <- ggplot(inv.city.sector.df, aes(x=inventory, y=logE, group=pollutant, col=pollutant)) 
-    p <- p + geom_line() + geom_point()
-    p <- p + labs(title = paste0(city, " ", sector), x="Inventory", y="log(emission)") 
-    p <- p + theme(text = element_text(size=20))
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_1_inv_logE.png")))
-    print(p)
-    dev.off()
-    
-    # plot the emisssions per pollutant
-    # This plot is useful for a visual diagnostic of the problem: parallel lines point to
-    # a high activity uncertainty. High dispersion for a pollutant points to an emission
-    # factor uncertainty.
+    # Line plot of log emission as a function of pollutant. This plot allows a visual
+    # diagnostic of the main source of uncertainty (parrallel lines => activity,
+    # big spread for one pollutant => emission factor)
     p <- ggplot(inv.city.sector.df, aes(x=pollutant, y=logE, group=inventory, col=inventory)) 
     p <- p + geom_point() + geom_line() 
     p <- p + theme(text = element_text(size=20))
     p <- p + labs(title = paste0(city, " ", sector), x="Pollutant", y="log(emission)")
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_2_pol_logE.png")))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig1_pol_logE.png")))
     print(p)
     dev.off()
+    
+    # plot the log-emisssions per inventory
+    p <- ggplot(inv.city.sector.df, aes(x=inventory, y=logE, group=pollutant, col=pollutant)) 
+    p <- p + geom_line() + geom_point()
+    p <- p + labs(title = paste0(city, " ", sector), x="Inventory", y="log(emission)") 
+    p <- p + theme(text = element_text(size=20))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig2_inv_logE.png")))
+    print(p)
+    dev.off()
+    
     
     # Implementation of ANOVA formulas
     # --------------------------------
@@ -167,7 +167,7 @@ for (city in city.list) {
     p <- p + labs(title = paste(city, sector, "\nlog(activity ratio) with 2-sided 95% CI"), 
                   x = "log(A1/A2)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_3_logA_ratios.png")))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig3_logA_ratios.png")))
     print(p)
     dev.off()
     
@@ -178,7 +178,7 @@ for (city in city.list) {
     p <- p + labs(title = paste(city, sector, "\nRelative activity diff. with 2-sided 95% CI"), 
                   x = "A1/A2 - 1 (%)", y="Inventory pair")
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_4_A_pctdiff.png")))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig4_A_pctdiff.png")))
     print(p)
     dev.off()
     
@@ -197,8 +197,10 @@ for (city in city.list) {
           inv1 <- inventory.list[i1]
           inv2 <- inventory.list[i2]
           # log EF ratio for pollutant p1 between inv1 and inv2
-          logEF.p1.inv1 <- inv.city.sector.df$logEF[inv.city.sector.df$inventory == inv1 & inv.city.sector.df$pollutant == pol.name]
-          logEF.p1.inv2 <- inv.city.sector.df$logEF[inv.city.sector.df$inventory == inv2 & inv.city.sector.df$pollutant == pol.name]
+          logEF.p1.inv1 <- inv.city.sector.df$logEF[inv.city.sector.df$inventory == inv1 & 
+                                                      inv.city.sector.df$pollutant == pol.name]
+          logEF.p1.inv2 <- inv.city.sector.df$logEF[inv.city.sector.df$inventory == inv2 & 
+                                                      inv.city.sector.df$pollutant == pol.name]
           lrEF1EF2 <- logEF.p1.inv1 - logEF.p1.inv2
           if (lrEF1EF2 < 0) {
             inv1 <- inventory.list[i2]
@@ -255,7 +257,8 @@ for (city in city.list) {
                                   "\nlog(EF ratios) with 2-sided 95% CI"), 
                     x = "log(EF1/EF2)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_5_logEF_", pollutant.list[i.p], "_ratios.png")))
+      png(file.path(ANOVA.results.path, 
+                    paste0(city, "_", sector, "_fig5", letters[i.p], "_logEF_", pollutant.list[i.p], "_ratios.png")))
       print(p)
       dev.off()
       
@@ -267,7 +270,8 @@ for (city in city.list) {
                                   "\nRelative EF diff. with 2-sided 95% CI"), 
                     x = "EF1/EF2 - 1 (%)", y="Inventory pair")
       p <- p + theme(text = element_text(size=plot.font.size))
-      png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_6_EF_", pollutant.list[i.p], "_pctdiff.png")))
+      png(file.path(ANOVA.results.path, 
+                    paste0(city, "_", sector, "_fig6", letters[i.p], "_EF_", pollutant.list[i.p], "_pctdiff.png")))
       print(p)
       dev.off()
     }
@@ -286,7 +290,7 @@ for (city in city.list) {
     p <- p + geom_point() + geom_line()
     p <- p + labs(title = paste(city, sector, "Residuals"))
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_7_residuals_pollutant.png")))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig7_residuals_pollutant.png")))
     print(p)
     dev.off()
 
@@ -295,7 +299,7 @@ for (city in city.list) {
     p <- p + geom_point() + geom_line()
     p <- p + labs(title = paste(city, sector, "Residuals"))
     p <- p + theme(text = element_text(size=plot.font.size))
-    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_8_residuals_inventory.png")))
+    png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig8_residuals_inventory.png")))
     print(p)
     dev.off()
     
