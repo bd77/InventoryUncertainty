@@ -10,6 +10,10 @@
 
 # contact: bart.degraeuwe@ec.europa.eu
 
+# The code is available on github 
+# Create a local git folder folder and execute in the git Shell:
+# $ git clone https://github.com/bd77/InventoryUncertainty.git
+
 # This script reads data for 11 cities, 3 sectors, 6 inventories and 4 pollutants.
 # A one-way ANOVA is performed on each city-sector combination. For each inventory
 # pair the log-activity and log-emission factor differences are calculated with
@@ -54,7 +58,7 @@ library(ggplot2)
 # clean up
 rm(list = ls())
 # set the working directory
-wd <- "C:/Documenten/InventoryUncertainty"
+wd <- "D:/Diamondplot/github/InventoryUncertainty"
 setwd(wd)
 
 # create a folder for the results
@@ -68,7 +72,7 @@ cred.level <- 0.95
 # plot font size
 plot.font.size <- 15
 # make trace plots
-trace.plots <- TRUE # takes a lot of time
+trace.plots <- FALSE # TRUE takes more time but gives all the trace plots
 # set the seed for repeatable results
 set.seed(666)
 
@@ -172,8 +176,8 @@ sd.res.df <- data.frame()
 sd.compare.df <- data.frame()
 
 # loop over cities and sectors
-for (city in city.list[1]) {
-  for (sector in sector.list[3]) {
+for (city in city.list) {
+  for (sector in sector.list) {
     print(paste("MCMC on emissions of", sector, "in", city))
     
     # data.frame for the results of a city-sector combination.

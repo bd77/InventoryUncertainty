@@ -10,6 +10,10 @@
 
 # contact: bart.degraeuwe@ec.europa.eu
 
+# The code is available on github 
+# Create a local git folder folder and execute in the git Shell:
+# $ git clone https://github.com/bd77/InventoryUncertainty.git
+
 # This script reads data for 11 cities, 3 sectors, 6 inventories and 4 pollutants.
 # A one-way ANOVA is performed on each city-sector combination. For each inventory
 # pair the log-activity and log-emission factor differences are calculated with
@@ -43,7 +47,7 @@ library(ggplot2)
 # clean up
 rm(list = ls())
 # set the working directory
-wd <- "C:/Documenten/InventoryUncertainty"
+wd <- "D:/Diamondplot/github/InventoryUncertainty"
 setwd(wd)
 
 # read the input data
@@ -52,20 +56,16 @@ city.list <- as.vector(unique(inv.df$city))
 sector.list <- as.vector(unique(inv.df$sector))
 
 # plot settings
-plot.font.size <- 15
+plot.font.size <- 20
 
 # data frame with all the results
 res.df <- data.frame()
 ANOVA.results.path <- "ANOVA_results"
 if (!dir.exists(ANOVA.results.path)) {dir.create(ANOVA.results.path)}
 
-# for testing
-city <- "Barcelona"
-sector <- "ms7"
-
 # loop over all city - sector combinations
-for (city in city.list[1]) {
-  for (sector in sector.list[3]) {
+for (city in city.list) {
+  for (sector in sector.list) {
     print(paste("ANOVA on emissions of", sector, "in", city))
     
     # create an empty data.frame to store results of a city-sector combination
@@ -84,7 +84,7 @@ for (city in city.list[1]) {
     # big spread for one pollutant => emission factor)
     p <- ggplot(inv.city.sector.df, aes(x=pollutant, y=logE, group=inventory, col=inventory)) 
     p <- p + geom_point() + geom_line() 
-    p <- p + theme(text = element_text(size=20))
+    p <- p + theme(text = element_text(size=plot.font.size))
     p <- p + labs(title = paste0(city, " ", sector), x="Pollutant", y="log(emission)")
     png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig1_pol_logE.png")))
     print(p)
@@ -94,7 +94,7 @@ for (city in city.list[1]) {
     p <- ggplot(inv.city.sector.df, aes(x=inventory, y=logE, group=pollutant, col=pollutant)) 
     p <- p + geom_line() + geom_point()
     p <- p + labs(title = paste0(city, " ", sector), x="Inventory", y="log(emission)") 
-    p <- p + theme(text = element_text(size=20))
+    p <- p + theme(text = element_text(size=plot.font.size))
     png(file.path(ANOVA.results.path, paste0(city, "_", sector, "_fig2_inv_logE.png")))
     print(p)
     dev.off()
